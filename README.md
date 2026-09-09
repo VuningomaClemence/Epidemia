@@ -86,6 +86,3 @@ L'application nécessite une base de données MySQL structurée contenant au min
    - **Exportation Excel** : Exportez les résultats de simulation.
 
 ---
-
-Projet développé dans le cadre de la recherche en épidémiologie computationnelle et de la gestion des infrastructures sanitaires en République Démocratique du Congo. Les contributions, suggestions et améliorations sont les bienvenues via des Pull Requests !
----
