@@ -3679,8 +3679,8 @@ def main():
             maladie_clean = meta["Nom"].strip().lower().replace(" ", "_")
             nom_fichier_excel = f"simulation_{maladie_clean}_{prov_clean}.xlsx"
 
-            col_exp1, col_exp2 = st.columns(2)
-            with col_exp1:
+            col_exp1, col_exp2, col_exp3 = st.columns([1, 2, 1])
+            with col_exp2:
                 st.download_button(
                     label="Télécharger le Rapport Complet (.xlsx)",
                     data=output_buffer,
@@ -3689,17 +3689,6 @@ def main():
                     type="primary",
                     use_container_width=True
                 )
-            with col_exp2:
-                if HAS_MATPLOTLIB:
-                    zip_figures = generer_archive_toutes_figures_matplotlib(sim_data, res_opt=res_opt_exp, dpi=300)
-                    st.download_button(
-                        label="Télécharger toutes les figures (.zip)",
-                        data=zip_figures,
-                        file_name=f"figures_matplotlib_rapport_{maladie_clean}_{prov_clean}.zip",
-                        mime="application/zip",
-                        type="secondary",
-                        use_container_width=True
-                    )
 
 
 

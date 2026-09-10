@@ -1,0 +1,12 @@
+streamlit
+numpy
+pandas
+scipy
+sqlalchemy
+pymysql
+matplotlib
+plotly
+folium
+streamlit-folium
+openpyxl
+xlsxwriter
