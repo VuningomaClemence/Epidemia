@@ -160,6 +160,16 @@ st.markdown("""
     }
 
     /* Responsive layout for tablets and mobile devices */
+    .mobile-kpi-grid {
+        display: grid !important;
+        grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+        gap: 0.75rem !important;
+        align-items: stretch;
+    }
+    .mobile-kpi-grid > div {
+        width: 100% !important;
+    }
+
     @media (max-width: 900px) {
         .main-header {
             padding: 1.1rem 0.9rem;
@@ -219,12 +229,8 @@ st.markdown("""
             font-size: 0.9rem;
         }
         .mobile-kpi-grid {
-            display: grid !important;
             grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
             gap: 0.6rem !important;
-        }
-        .mobile-kpi-grid > div {
-            width: 100% !important;
         }
     }
 </style>
@@ -2583,6 +2589,11 @@ def main():
                         hoverlabel=dict(bgcolor="#0f172a", font_size=12),
                         uirevision=f"dynamique-{sim_data['province']}"
                     )
+                    if st.session_state.get("_is_mobile"):
+                        fig_prov.update_layout(
+                            legend=dict(orientation="h", yanchor="bottom", y=-0.18, xanchor="left", x=0),
+                            margin=dict(l=52, r=24, t=76, b=108)
+                        )
 
                     st.plotly_chart(fig_prov, use_container_width=True, config=config_hd)
 
