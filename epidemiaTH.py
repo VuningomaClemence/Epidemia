@@ -360,6 +360,7 @@ def extract_t0_num(t0_str):
             return 999
     return 999
 
+@st.cache_data(ttl=600)
 def generer_matrice_mobilite_infrastructures(df_z, theta=1e-5, gamma_dist=2.0):
     """Génère la matrice de mobilité gravitaire inter-infrastructures."""
     lats = np.radians(df_z['latitude_infra'].to_numpy(dtype=float))
@@ -384,6 +385,66 @@ def generer_matrice_mobilite_infrastructures(df_z, theta=1e-5, gamma_dist=2.0):
     mobility /= np.maximum(pops[:, None], 1.0)
     np.fill_diagonal(mobility, 0.0)
     return mobility
+
+
+def calculer_liaisons_interprovinciales(df_zones_p, distance_max_interprov_km):
+    """Calcule les liaisons inter-provinciales de manière vectorisée pour éviter les boucles Python lentes."""
+    if distance_max_interprov_km <= 0 or len(df_zones_p) < 2:
+        return []
+
+    z_lats = np.radians(df_zones_p['latitude_infra'].to_numpy(dtype=float))
+    z_lons = np.radians(df_zones_p['longitude_infra'].to_numpy(dtype=float))
+    delta_lat = z_lats[:, None] - z_lats[None, :]
+    delta_lon = z_lons[:, None] - z_lons[None, :]
+    geo_term = (
+        np.sin(delta_lat / 2.0) ** 2
+        + np.cos(z_lats[:, None]) * np.cos(z_lats[None, :])
+        * np.sin(delta_lon / 2.0) ** 2
+    )
+    distances = 6371.0 * 2.0 * np.arctan2(
+        np.sqrt(np.clip(geo_term, 0.0, 1.0)),
+        np.sqrt(np.clip(1.0 - geo_term, 0.0, 1.0)),
+    )
+
+    mask = np.triu(np.ones((len(df_zones_p), len(df_zones_p)), dtype=bool), k=1)
+    mask &= distances <= distance_max_interprov_km
+
+    if not np.any(mask):
+        return []
+
+    seen = set()
+    liaisons = []
+    for i, j in zip(*np.where(mask)):
+        prov_i = str(df_zones_p.loc[i, 'province']).strip()
+        prov_j = str(df_zones_p.loc[j, 'province']).strip()
+        if prov_i.lower() == prov_j.lower():
+            continue
+
+        zone_a = str(df_zones_p.loc[i, 'nomZone'])
+        zone_b = str(df_zones_p.loc[j, 'nomZone'])
+        pair_key = tuple(sorted((zone_a, zone_b)))
+        if pair_key in seen:
+            continue
+        seen.add(pair_key)
+
+        d_km = float(distances[i, j])
+        liaisons.append({
+            "zone_a": zone_a,
+            "infra_a": str(df_zones_p.loc[i, 'nom_infra_ref']),
+            "prov_a": prov_i,
+            "lat_a": float(df_zones_p.loc[i, 'latitude_infra']),
+            "lon_a": float(df_zones_p.loc[i, 'longitude_infra']),
+            "zone_b": zone_b,
+            "infra_b": str(df_zones_p.loc[j, 'nom_infra_ref']),
+            "prov_b": prov_j,
+            "lat_b": float(df_zones_p.loc[j, 'latitude_infra']),
+            "lon_b": float(df_zones_p.loc[j, 'longitude_infra']),
+            "dist_km": round(d_km, 1),
+        })
+
+    liaisons.sort(key=lambda x: x["dist_km"])
+    return liaisons
+
 
 def resoudre_simulation_seir_zone(idx_start, df_zones_p, N_vec, M, t_total, est_seir, beta_base, gamma_base, sigma_base, taux_hosp, nom_maladie, R0_base, D_base, E_base, nom_province, mode_selection="Aléatoire"):
     """Résout le modèle différentiel pour un foyer initial donné (idx_start) et retourne les données complètes."""
@@ -678,7 +739,8 @@ def generer_analyse_sensibilite_provinciale_moyenne(simulations_foyers, pas_jour
     return df_croise_moyen, df_sensibilite_plate
 
 
-def simuler_epidemic_streamlit(engine, df_maladies, nom_province, nom_infra_depart="ALEATOIRE", nom_maladie_saisie="Choléra", duree_jours=100, taux_hospitalisation=None, theta=1e-5, gamma_dist=2.0, seed_epicentre=None, distance_max_interprov_km=0, inclure_interprovincial=False):
+@st.cache_data(ttl=600)
+def simuler_epidemic_streamlit(_engine, df_maladies, nom_province, nom_infra_depart="ALEATOIRE", nom_maladie_saisie="Choléra", duree_jours=100, taux_hospitalisation=None, theta=1e-5, gamma_dist=2.0, seed_epicentre=None, distance_max_interprov_km=0, inclure_interprovincial=False):
     """Effectue la simulation SIR / SEIR spatio-temporelle avec prise en compte optionnelle des infrastructures inter-provinciales limitrophes."""
     
     # 1. Infos Maladie
@@ -709,7 +771,7 @@ def simuler_epidemic_streamlit(engine, df_maladies, nom_province, nom_infra_depa
             taux_hosp = taux_hosp / 100.0
 
     # 2. Chargement des Zones et Détection des Proximités Inter-Provinciales
-    df_all_zones = charger_toutes_zones_infrastructures(engine)
+    df_all_zones = charger_toutes_zones_infrastructures(_engine)
     
     # Filtrage de la province principale
     df_main = df_all_zones[df_all_zones['province'].str.strip().str.lower() == nom_province.strip().lower()].copy().reset_index(drop=True)
@@ -760,50 +822,7 @@ def simuler_epidemic_streamlit(engine, df_maladies, nom_province, nom_infra_depa
         
         if not df_other.empty:
             df_zones_p = pd.concat([df_main, df_other], ignore_index=True)
-            
-            # Recensement de toutes les liaisons de proximité inter-provinciales
-            K_tot = len(df_zones_p)
-            z_lats = np.radians(df_zones_p['latitude_infra'].values)
-            z_lons = np.radians(df_zones_p['longitude_infra'].values)
-            z_dlat = z_lats[:, None] - z_lats[None, :]
-            z_dlon = z_lons[:, None] - z_lons[None, :]
-            z_a = np.sin(z_dlat / 2.0)**2 + np.cos(z_lats[:, None]) * np.cos(z_lats[None, :]) * np.sin(z_dlon / 2.0)**2
-            z_dist = np.maximum(6371.0 * (2 * np.arctan2(np.sqrt(np.clip(z_a, 0, 1)), np.sqrt(np.clip(1 - z_a, 0, 1)))), 0.0)
-            
-            liaisons_vues = set()
-            for i in range(K_tot):
-                for j in range(i + 1, K_tot):
-                    prov_i = str(df_zones_p.loc[i, 'province']).strip()
-                    prov_j = str(df_zones_p.loc[j, 'province']).strip()
-                    if prov_i.lower() != prov_j.lower():
-                        d_km = z_dist[i, j]
-                        if d_km <= distance_max_interprov_km:
-                            za = str(df_zones_p.loc[i, 'nomZone'])
-                            zb = str(df_zones_p.loc[j, 'nomZone'])
-                            ia = str(df_zones_p.loc[i, 'nom_infra_ref'])
-                            ib = str(df_zones_p.loc[j, 'nom_infra_ref'])
-                            lata = float(df_zones_p.loc[i, 'latitude_infra'])
-                            latb = float(df_zones_p.loc[j, 'latitude_infra'])
-                            lona = float(df_zones_p.loc[i, 'longitude_infra'])
-                            lonb = float(df_zones_p.loc[j, 'longitude_infra'])
-                            
-                            cle_l = tuple(sorted([za, zb]))
-                            if cle_l not in liaisons_vues:
-                                liaisons_vues.add(cle_l)
-                                liaisons_interprovinciales.append({
-                                    "zone_a": za,
-                                    "infra_a": ia,
-                                    "prov_a": prov_i,
-                                    "lat_a": lata,
-                                    "lon_a": lona,
-                                    "zone_b": zb,
-                                    "infra_b": ib,
-                                    "prov_b": prov_j,
-                                    "lat_b": latb,
-                                    "lon_b": lonb,
-                                    "dist_km": round(float(d_km), 1)
-                                })
-            liaisons_interprovinciales.sort(key=lambda x: x["dist_km"])
+            liaisons_interprovinciales = calculer_liaisons_interprovinciales(df_zones_p, distance_max_interprov_km)
         else:
             df_zones_p = df_main.copy()
     else:
@@ -841,7 +860,7 @@ def simuler_epidemic_streamlit(engine, df_maladies, nom_province, nom_infra_depa
     else:
         # Recherche de l'infrastructure saisie
         saisie_epuree = infra_saisie.lower()
-        colonne_nom_infra = trouver_nom_colonne_infra(engine)
+        colonne_nom_infra = trouver_nom_colonne_infra(_engine)
         query_flexible = text(f"""
             SELECT 
                 i.idZone AS idZone_sante,
@@ -854,7 +873,7 @@ def simuler_epidemic_streamlit(engine, df_maladies, nom_province, nom_infra_depa
             WHERE LOWER(i.{colonne_nom_infra}) LIKE :infra
             LIMIT 1
         """)
-        with engine.connect() as conn:
+        with _engine.connect() as conn:
             df_dep = pd.read_sql(query_flexible, conn, params={"infra": f"%{saisie_epuree}%"})
 
         idx_manuel = 0
@@ -2176,10 +2195,11 @@ def main():
     st.sidebar.markdown("Paramètres de Simulation")
 
     # 1. Sélection de la Province
+    province_par_defaut = "Kinshasa" if "Kinshasa" in provinces else (provinces[0] if provinces else None)
     province_choisie = st.sidebar.selectbox(
         "Province :",
         options=provinces,
-        index=0 if provinces else None
+        index=provinces.index(province_par_defaut) if province_par_defaut in provinces else 0
     )
 
     # 2. Sélection de l'Épicentre / Foyer Initial (Aléatoire par défaut)
@@ -2228,10 +2248,11 @@ def main():
 
     # 3. Sélection de la Maladie
     liste_maladies = df_maladies['NomMaladie'].str.strip().tolist() if not df_maladies.empty else []
+    maladie_par_defaut = "Choléra" if "Choléra" in liste_maladies else ("Cholera" if "Cholera" in liste_maladies else (liste_maladies[0] if liste_maladies else None))
     maladie_choisie = st.sidebar.selectbox(
         "Maladie :",
         options=liste_maladies,
-        index=0 if liste_maladies else 0
+        index=liste_maladies.index(maladie_par_defaut) if maladie_par_defaut in liste_maladies else 0
     )
 
     # Valeur par défaut du taux d'hospitalisation selon la maladie choisie
@@ -2307,12 +2328,13 @@ def main():
 
     bouton_lancer = st.sidebar.button("Lancer la Simulation", type="primary", use_container_width=True)
 
-    # Exécution de la simulation
+    # Au chargement de l'application, on affiche immédiatement les résultats
+    # pour la province et la maladie par défaut choisies.
     if "sim_data" not in st.session_state or bouton_lancer:
         if province_choisie and maladie_choisie:
             with st.spinner("Calcul de la simulation épidémiologique et de la mobilité..."):
                 res, err = simuler_epidemic_streamlit(
-                    engine=moteur_sql,
+                    _engine=moteur_sql,
                     df_maladies=df_maladies,
                     nom_province=province_choisie,
                     nom_infra_depart=infra_choisie,
@@ -2331,6 +2353,10 @@ def main():
                     st.session_state["sim_data"] = res
 
     sim_data = st.session_state.get("sim_data")
+
+    if sim_data is None:
+        st.info("Choisis une province et une maladie pour lancer la simulation.")
+        st.stop()
 
     # Affichage du Dashboard
     if sim_data:
