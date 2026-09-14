@@ -41,7 +41,7 @@ st.set_page_config(
     page_title="Epidemia - Dashboard Épidémiologique RD Congo",
     page_icon="🦠",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Style CSS Adaptatif (Mode Clair & Mode Sombre)
@@ -157,6 +157,75 @@ st.markdown("""
         background-color: #d93636 !important;
         border-color: #d93636 !important;
         color: #ffffff !important;
+    }
+
+    /* Responsive layout for tablets and mobile devices */
+    @media (max-width: 900px) {
+        .main-header {
+            padding: 1.1rem 0.9rem;
+            margin-bottom: 1rem;
+        }
+        .main-header h1 {
+            font-size: 1.5rem !important;
+        }
+        .main-header p {
+            font-size: 0.9rem !important;
+        }
+        .metric-card {
+            height: auto;
+            min-height: 110px;
+            padding: 0.8rem;
+        }
+        .metric-value {
+            font-size: 1.2rem;
+        }
+        .metric-title {
+            font-size: 0.72rem;
+        }
+    }
+
+    @media (max-width: 600px) {
+        div[data-testid="block-container"] {
+            padding-left: 0.45rem !important;
+            padding-right: 0.45rem !important;
+        }
+        [data-testid="stSidebar"] {
+            width: min(100vw, 280px) !important;
+        }
+        [data-testid="stSidebarContent"],
+        [data-testid="stSidebarCollapseButton"] {
+            padding-top: 0.25rem;
+        }
+        .main-header {
+            padding: 0.9rem 0.7rem;
+        }
+        .main-header h1 {
+            font-size: 1.15rem !important;
+        }
+        .metric-card {
+            min-height: 95px;
+            padding: 0.7rem;
+        }
+        .metric-value {
+            font-size: 1.05rem;
+        }
+        .metric-sub {
+            font-size: 0.73rem;
+        }
+        div[data-testid="stButton"] > button,
+        div[data-testid="stDownloadButton"] > button {
+            min-height: 42px;
+            padding: 0.55rem 0.75rem;
+            font-size: 0.9rem;
+        }
+        .mobile-kpi-grid {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 0.6rem !important;
+        }
+        .mobile-kpi-grid > div {
+            width: 100% !important;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -2385,52 +2454,36 @@ def main():
         nb_zones_touchees = len(df_synth[df_synth["t0"] != "Non touchée"])
         total_zones = len(df_synth)
 
-        col1, col2, col3, col4, col5 = st.columns(5)
-
-        with col1:
-            st.markdown(f"""
+        kpis_html = f"""
+        <div class="mobile-kpi-grid">
             <div class="metric-card">
                 <div class="metric-title">Population Totale</div>
                 <div class="metric-value">{pop_totale:,}</div>
                 <div class="metric-sub">{total_zones} Zones de Santé</div>
             </div>
-            """, unsafe_allow_html=True)
-
-        with col2:
-            st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-title">Pic d'Infectés</div>
                 <div class="metric-value">{pic_infectes_prov:,}</div>
                 <div class="metric-sub">Au Jour {jour_pic_prov}</div>
             </div>
-            """, unsafe_allow_html=True)
-
-        with col3:
-            st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-title">Capacité Lits Totale</div>
                 <div class="metric-value">{lits_totaux:,}</div>
                 <div class="metric-sub">Requis au Pic : {lits_req_pic:,}</div>
             </div>
-            """, unsafe_allow_html=True)
-
-        with col4:
-            st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-title">Déficit Cumulé</div>
                 <div class="metric-value" style="color: {'#ef4444' if deficit_max > 0 else '#10b981'}">{deficit_max:,}</div>
                 <div class="metric-sub">Taux Hosp : {int(meta['TauxHosp']*100)}%</div>
             </div>
-            """, unsafe_allow_html=True)
-
-        with col5:
-            st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-title">Zones Touchées</div>
                 <div class="metric-value">{nb_zones_touchees} / {total_zones}</div>
                 <div class="metric-sub">{int(nb_zones_touchees/total_zones*100)}% du territoire</div>
             </div>
-            """, unsafe_allow_html=True)
+        </div>
+        """
+        st.markdown(kpis_html, unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
