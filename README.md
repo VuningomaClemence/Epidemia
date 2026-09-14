@@ -6,8 +6,8 @@
 
 ## 🌟 Fonctionnalités Clés
 
-1. **Connexion & Introspection MySQL Dynamique** :
-   - Connexion sécurisée via SQLAlchemy.
+1. **Connexion & Introspection SQLite Dynamique** :
+   - Connexion via SQLAlchemy à un fichier `epidemia.db`.
    - Détection automatique des structures d'infrastructures sanitaires et des zones de santé de la province sélectionnée.
 2. **Modélisation Épidémiologique Avancée (SIR / SEIR)** :
    - Résolution d'équations différentielles ordinaires (ODE) avec `scipy.integrate.odeint`.
@@ -28,39 +28,43 @@
 
 ## 🛠️ Stack Technique
 
-* **Interface Web** : Streamlit (`st.set_page_config`, composants natifs, CSS adaptatif Mode Clair/Sombre).
-* **Calculs Mathématiques & Scientifiques** : `NumPy`, `SciPy` (`odeint`).
-* **Gestion des Données** : `Pandas`, `SQLAlchemy`, `PyMySQL`.
-* **Visualisations Graphiques** : `Plotly` (`graph_objects`, `express`).
-* **Cartographie Spatiale** : Intégration HTML/JS Leaflet personnalisée avec rendu dynamique.
+- **Interface Web** : Streamlit (`st.set_page_config`, composants natifs, CSS adaptatif Mode Clair/Sombre).
+- **Calculs Mathématiques & Scientifiques** : `NumPy`, `SciPy` (`odeint`).
+- **Gestion des Données** : `Pandas`, `SQLAlchemy`, `SQLite`.
+- **Visualisations Graphiques** : `Plotly` (`graph_objects`, `express`).
+- **Cartographie Spatiale** : Intégration HTML/JS Leaflet personnalisée avec rendu dynamique.
 
 ---
 
 ## 📋 Prérequis & Configuration de la Base de Données
 
-L'application nécessite une base de données MySQL structurée contenant au minimum les tables suivantes :
-* `zonesante` : Informations démographiques et géographiques des zones de santé (avec `idZone`, `NomZone`, `province`, `population_2026`, `capacite_totale`).
-* `infrastructures` : Structures de santé rattachées aux zones (`idZone`, nom de l'infrastructure, `latitude`, `longitude`).
-* `maladie` : Paramètres épidémiologiques des pathologies (`NomMaladie`, `Ro`, `D`, `E`, `modele`, `TauxHospitalisation`).
+L'application nécessite un fichier SQLite `epidemia.db` contenant au minimum les tables suivantes :
+
+- `zonesante` : Informations démographiques et géographiques des zones de santé (avec `idZone`, `NomZone`, `province`, `population_2026`, `capacite_totale`).
+- `infrastructures` : Structures de santé rattachées aux zones (`idZone`, nom de l'infrastructure, `latitude`, `longitude`).
+- `maladie` : Paramètres épidémiologiques des pathologies (`NomMaladie`, `Ro`, `D`, `E`, `modele`, `TauxHospitalisation`).
 
 ---
 
 ## 🚀 Installation & Exécution
 
 1. **Cloner le dépôt** :
+
    ```bash
    git clone https://github.com/votre-nom/epidemia-rdc.git
    cd epidemia-rdc
    ```
 
 2. **Installer les dépendances Python** :
+
    ```bash
    pip install -r requirements.txt
    ```
-   *(Dépendances principales : `streamlit`, `pandas`, `numpy`, `scipy`, `sqlalchemy`, `pymysql`, `plotly`)*
 
-3. **Configurer l'accès MySQL** :
-   Lancer l'application et renseigner vos identifiants MySQL dans la barre latérale (Sidebar) de l'application Streamlit (Hôte, Port, Utilisateur, Mot de passe, Nom de la base).
+   _(Dépendances principales : `streamlit`, `pandas`, `numpy`, `scipy`, `sqlalchemy`, `plotly`)_
+
+3. **Placer la base SQLite** :
+   Placez le fichier `epidemia.db` dans le même dossier que `epidemiaTH.py`, ou indiquez son chemin complet dans la section **Paramètres SQLite** de la barre latérale.
 
 4. **Lancer l'application Streamlit** :
    ```bash
@@ -72,7 +76,7 @@ L'application nécessite une base de données MySQL structurée contenant au min
 ## 📖 Utilisation de l'Application
 
 1. Barre Latérale (Sidebar) :
-   - Saisissez vos paramètres de connexion MySQL.
+   - Indiquez le chemin du fichier SQLite.
    - Sélectionnez la **Province** cible en RDC.
    - Choisissez le mode d'épicentre (**Aléatoire** avec option de graine / **Personnalisé**).
    - Sélectionnez la **Maladie** (ex: Choléra).

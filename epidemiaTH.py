@@ -228,34 +228,38 @@ def obtenir_nom_couleur_province(nom_province):
 
 
 
-# 1. GESTION DE LA CONNEXION À LA BASE DE DONNÉES MYSQL
+# 1. GESTION DE LA CONNEXION À LA BASE DE DONNÉES SQLITE
 
 @st.cache_resource
-def get_db_engine(user, password, host, port, dbname):
-    """Crée et met en cache la connexion SQLAlchemy vers MySQL."""
-    conn_str = f"mysql+pymysql://{user}:{password}@{host}:{port}/{dbname}?charset=latin1"
-    return create_engine(conn_str, pool_pre_ping=True)
+def get_db_engine(db_path):
+    """Crée et met en cache la connexion SQLAlchemy vers SQLite."""
+    db_path = os.path.abspath(os.path.expanduser(db_path))
+    return create_engine(f"sqlite:///{db_path}", pool_pre_ping=True)
 
 def me_connecter_base():
-    """Formulaire sidebar / initialisation de la base de données."""
-    st.sidebar.markdown("Connexion MySQL")
-    
-    with st.sidebar.expander("Paramètres MySQL", expanded=False):
-        db_host = st.text_input("Hôte", value="localhost")
-        db_port = st.text_input("Port", value="3306")
-        db_user = st.text_input("Utilisateur", value="root")
-        db_password = st.text_input("Mot de passe", value="", type="password")
-        db_name = st.text_input("Base de données", value="epidemia")
-        
+    """Formulaire sidebar et initialisation de la base SQLite."""
+    st.sidebar.markdown("Connexion SQLite")
+
+    with st.sidebar.expander("Paramètres SQLite", expanded=False):
+        db_path = st.text_input("Fichier de base de données", value="epidemia.db")
+
+    db_path = os.path.abspath(os.path.expanduser(db_path.strip() or "epidemia.db"))
+    if not os.path.exists(db_path):
+        st.sidebar.error(f"Fichier SQLite introuvable : {db_path}")
+        st.error(
+            "La base SQLite est introuvable. Placez le fichier epidemia.db "
+            "dans le dossier de l'application ou indiquez son chemin dans la sidebar."
+        )
+        return None
+
     try:
-        engine = get_db_engine(db_user, db_password, db_host, db_port, db_name)
+        engine = get_db_engine(db_path)
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        # st.sidebar.success("Connexion MySQL réussie")
         return engine
     except Exception as e:
         st.sidebar.error(f"Échec de connexion : {e}")
-        st.error(f"Impossible de se connecter à la base de données MySQL `{db_name}` sur {db_host}:{db_port}. Veuillez vérifier vos identifiants dans la sidebar.")
+        st.error(f"Impossible d'ouvrir la base SQLite `{db_path}` : {e}")
         return None
 
 
@@ -358,38 +362,45 @@ def extract_t0_num(t0_str):
 
 def generer_matrice_mobilite_infrastructures(df_z, theta=1e-5, gamma_dist=2.0):
     """Génère la matrice de mobilité gravitaire inter-infrastructures."""
-    K = len(df_z)
-    M = np.zeros((K, K))
-    lats = df_z['latitude_infra'].values
-    lons = df_z['longitude_infra'].values
-    pops = df_z['population_2026'].values
+    lats = np.radians(df_z['latitude_infra'].to_numpy(dtype=float))
+    lons = np.radians(df_z['longitude_infra'].to_numpy(dtype=float))
+    pops = df_z['population_2026'].to_numpy(dtype=float)
 
-    for i in range(K):
-        for j in range(K):
-            if i != j:
-                dist_km = max(calculer_distance_haversine(lats[i], lons[i], lats[j], lons[j]), 1.0)
-                flux = theta * (pops[i] * pops[j]) / (dist_km ** gamma_dist)
-                M[i, j] = flux / max(pops[i], 1.0)
-    return M
+    delta_lat = lats[:, None] - lats[None, :]
+    delta_lon = lons[:, None] - lons[None, :]
+    geo_term = (
+        np.sin(delta_lat / 2.0) ** 2
+        + np.cos(lats[:, None]) * np.cos(lats[None, :])
+        * np.sin(delta_lon / 2.0) ** 2
+    )
+    distances = 6371.0 * 2.0 * np.arctan2(
+        np.sqrt(np.clip(geo_term, 0.0, 1.0)),
+        np.sqrt(np.clip(1.0 - geo_term, 0.0, 1.0)),
+    )
+    np.fill_diagonal(distances, 1.0)
+    distances = np.maximum(distances, 1.0)
+
+    mobility = theta * pops[None, :] / (distances ** gamma_dist)
+    mobility /= np.maximum(pops[:, None], 1.0)
+    np.fill_diagonal(mobility, 0.0)
+    return mobility
 
 def resoudre_simulation_seir_zone(idx_start, df_zones_p, N_vec, M, t_total, est_seir, beta_base, gamma_base, sigma_base, taux_hosp, nom_maladie, R0_base, D_base, E_base, nom_province, mode_selection="Aléatoire"):
     """Résout le modèle différentiel pour un foyer initial donné (idx_start) et retourne les données complètes."""
     K = len(df_zones_p)
+    flux_sortant = M.sum(axis=1)
     if est_seir:
         def modele_ode(y, t):
             S, E, I, R = y[0:K], y[K:2*K], y[2*K:3*K], y[3*K:4*K]
-            dS, dE, dI, dR = np.zeros(K), np.zeros(K), np.zeros(K), np.zeros(K)
-            for i in range(K):
-                inf_loc = beta_base * S[i] * max(0, I[i]) / max(1, N_vec[i])
-                sortants_E = np.sum(M[i, :]) * max(0, E[i])
-                entrants_E = np.dot(M[:, i], np.maximum(0, E))
-                sortants_I = np.sum(M[i, :]) * max(0, I[i])
-                entrants_I = np.dot(M[:, i], np.maximum(0, I))
-                
-                dS[i] = -inf_loc
-                dE[i] = inf_loc - (sigma_base * E[i]) - sortants_E + entrants_E
-                dI[i] = (sigma_base * E[i]) - (gamma_base * I[i]) - sortants_I + entrants_I
-                dR[i] = gamma_base * I[i]
+            exposes = np.maximum(E, 0.0)
+            infectes = np.maximum(I, 0.0)
+            infections_locales = beta_base * S * infectes / np.maximum(N_vec, 1.0)
+            entrants_exposes = M.T @ exposes
+            entrants_infectes = M.T @ infectes
+            dS = -infections_locales
+            dE = infections_locales - sigma_base * E - flux_sortant * exposes + entrants_exposes
+            dI = sigma_base * E - gamma_base * I - flux_sortant * infectes + entrants_infectes
+            dR = gamma_base * I
             return np.concatenate([dS, dE, dI, dR])
 
         S0 = np.copy(N_vec)
@@ -406,15 +417,12 @@ def resoudre_simulation_seir_zone(idx_start, df_zones_p, N_vec, M, t_total, est_
     else:
         def modele_ode(y, t):
             S, I, R = y[0:K], y[K:2*K], y[2*K:3*K]
-            dS, dI, dR = np.zeros(K), np.zeros(K), np.zeros(K)
-            for i in range(K):
-                inf_loc = beta_base * S[i] * max(0, I[i]) / max(1, N_vec[i])
-                sortants_I = np.sum(M[i, :]) * max(0, I[i])
-                entrants_I = np.dot(M[:, i], np.maximum(0, I))
-                
-                dS[i] = -inf_loc
-                dI[i] = inf_loc - (gamma_base * I[i]) - sortants_I + entrants_I
-                dR[i] = gamma_base * I[i]
+            infectes = np.maximum(I, 0.0)
+            infections_locales = beta_base * S * infectes / np.maximum(N_vec, 1.0)
+            entrants_infectes = M.T @ infectes
+            dS = -infections_locales
+            dI = infections_locales - gamma_base * I - flux_sortant * infectes + entrants_infectes
+            dR = gamma_base * I
             return np.concatenate([dS, dI, dR])
 
         S0 = np.copy(N_vec)
@@ -711,31 +719,41 @@ def simuler_epidemic_streamlit(engine, df_maladies, nom_province, nom_infra_depa
     
     liaisons_interprovinciales = []
     if inclure_interprovincial and distance_max_interprov_km > 0:
-        # Calcul vectorisé des distances entre toutes les zones de santé de la base
-        all_lats = np.radians(df_all_zones['latitude_infra'].values)
-        all_lons = np.radians(df_all_zones['longitude_infra'].values)
-        dlat = all_lats[:, None] - all_lats[None, :]
-        dlon = all_lons[:, None] - all_lons[None, :]
-        a_geo = np.sin(dlat / 2.0)**2 + np.cos(all_lats[:, None]) * np.cos(all_lats[None, :]) * np.sin(dlon / 2.0)**2
-        dist_all_matrix = np.maximum(6371.0 * (2 * np.arctan2(np.sqrt(np.clip(a_geo, 0, 1)), np.sqrt(np.clip(1 - a_geo, 0, 1)))), 0.0)
-        
-        all_provinces = df_all_zones['province'].str.strip().values
+        # Explore les provinces par frontière au lieu de construire une matrice
+        # zones-vers-zones complète, très coûteuse avec une base volumineuse.
+        all_lats = np.radians(df_all_zones['latitude_infra'].to_numpy(dtype=float))
+        all_lons = np.radians(df_all_zones['longitude_infra'].to_numpy(dtype=float))
+        all_provinces = df_all_zones['province'].astype(str).str.strip().to_numpy()
         nom_prov_clean = nom_province.strip().lower()
-        
-        # Découverte transitive en cascade des provinces connectées ("et dans les provinces voisines ainsi de suite")
+
+        province_normalisee = (
+            pd.Series(all_provinces, dtype="string")
+            .str.lower()
+            .to_numpy()
+        )
         provs_trouvees = {nom_prov_clean}
-        changed = True
-        while changed:
-            changed = False
-            for i, p_src in enumerate(all_provinces):
-                if p_src.lower() in provs_trouvees:
-                    close_idxs = np.where(dist_all_matrix[i] <= distance_max_interprov_km)[0]
-                    for j in close_idxs:
-                        p_dst = all_provinces[j]
-                        if p_dst.lower() not in provs_trouvees:
-                            provs_trouvees.add(p_dst.lower())
-                            changed = True
-                            
+        frontier = np.flatnonzero(province_normalisee == nom_prov_clean)
+        while len(frontier) > 0:
+            frontier_lats = all_lats[frontier][:, None]
+            frontier_lons = all_lons[frontier][:, None]
+            dlat = frontier_lats - all_lats[None, :]
+            dlon = frontier_lons - all_lons[None, :]
+            geo_term = (
+                np.sin(dlat / 2.0) ** 2
+                + np.cos(frontier_lats) * np.cos(all_lats[None, :])
+                * np.sin(dlon / 2.0) ** 2
+            )
+            distances = 6371.0 * 2.0 * np.arctan2(
+                np.sqrt(np.clip(geo_term, 0.0, 1.0)),
+                np.sqrt(np.clip(1.0 - geo_term, 0.0, 1.0)),
+            )
+            close_indices = np.unique(np.where(distances <= distance_max_interprov_km)[1])
+            provinces_proches = set(province_normalisee[close_indices]) - provs_trouvees
+            if not provinces_proches:
+                break
+            provs_trouvees.update(provinces_proches)
+            frontier = np.flatnonzero(np.isin(province_normalisee, list(provinces_proches)))
+
         # Récupération de l'ensemble des zones de santé de toutes les provinces connectées
         df_other = df_all_zones[(df_all_zones['province'].str.strip().str.lower() != nom_prov_clean) & 
                                 (df_all_zones['province'].str.strip().str.lower().isin(provs_trouvees))].copy().reset_index(drop=True)
@@ -2150,7 +2168,7 @@ def main():
     if not moteur_sql:
         st.stop()
 
-    # Chargement dynamique initial depuis MySQL
+    # Chargement dynamique initial depuis SQLite
     provinces = charger_provinces(moteur_sql)
     df_maladies = charger_maladies(moteur_sql)
 
@@ -2248,7 +2266,27 @@ def main():
         step=5
     )
 
-    # 6. Proximité & Transmission Inter-Provinciale
+    # 6. Paramètres de mobilité spatiale
+    theta_mobilite = st.sidebar.slider(
+        "Intensité de mobilité θ :",
+        min_value=0.01,
+        max_value=1.0,
+        value=0.05,
+        step=0.000001,
+        format="%.6f",
+        help="Contrôle l'intensité des flux entre infrastructures. Une valeur élevée augmente la propagation spatiale."
+    )
+    gamma_friction = st.sidebar.slider(
+        "Friction spatiale γ :",
+        min_value=0.5,
+        max_value=5.0,
+        value=2.0,
+        step=0.1,
+        format="%.1f",
+        help="Contrôle la diminution de la mobilité avec la distance. Une valeur élevée limite les flux lointains."
+    )
+
+    # 7. Proximité & Transmission Inter-Provinciale
     with st.sidebar.expander("Proximité Inter-Provinciale", expanded=True):
         activer_interprov = st.checkbox(
             "Inclure zones des provinces voisines",
@@ -2281,6 +2319,8 @@ def main():
                     nom_maladie_saisie=maladie_choisie,
                     duree_jours=duree_jours,
                     taux_hospitalisation=taux_hosp_val,
+                    theta=theta_mobilite,
+                    gamma_dist=gamma_friction,
                     seed_epicentre=seed_val,
                     distance_max_interprov_km=dist_interprov_max,
                     inclure_interprovincial=activer_interprov
@@ -2383,7 +2423,24 @@ def main():
 
             if HAS_PLOTLY:
                 config_hd = {'toImageButtonOptions': {'format': 'png', 'scale': 3}, 'displaylogo': False}
-                col_left, col_right = st.columns([2, 1.25])
+                liste_zones = df_synth["Zone de Santé"].tolist()
+                zone_epicentre = sim_data.get("zone_depart")
+
+                idx_defaut = 0
+                if zone_epicentre and zone_epicentre in liste_zones:
+                    idx_defaut = liste_zones.index(zone_epicentre)
+                elif "est_foyer" in df_synth.columns:
+                    foyers = df_synth[df_synth["est_foyer"] == True]["Zone de Santé"].tolist()
+                    if foyers and foyers[0] in liste_zones:
+                        idx_defaut = liste_zones.index(foyers[0])
+
+                zone_choisie_plot = st.selectbox(
+                    "Capacité par ZS :",
+                    options=liste_zones,
+                    index=idx_defaut
+                )
+
+                col_left, col_right = st.columns([2, 1.25], vertical_alignment="top")
 
                 with col_left:
                     fig_prov = go.Figure()
@@ -2448,34 +2505,9 @@ def main():
                         uirevision=f"dynamique-{sim_data['province']}"
                     )
 
-                    st.markdown("<div style='height: 46px;'></div>", unsafe_allow_html=True)
                     st.plotly_chart(fig_prov, use_container_width=True, config=config_hd)
 
                 with col_right:
-                    col_label, col_select = st.columns([1, 2])
-                    
-                    with col_label:
-                        st.markdown("<div style='padding-top: 8px; text-align: right;'><b>Capacité par ZS :</b></div>", unsafe_allow_html=True)
-                    
-                    with col_select:
-                        liste_zones = df_synth["Zone de Santé"].tolist()
-                        zone_epicentre = sim_data.get("zone_depart")
-                        
-                        idx_defaut = 0
-                        if zone_epicentre and zone_epicentre in liste_zones:
-                            idx_defaut = liste_zones.index(zone_epicentre)
-                        elif "est_foyer" in df_synth.columns:
-                            foyers = df_synth[df_synth["est_foyer"] == True]["Zone de Santé"].tolist()
-                            if foyers and foyers[0] in liste_zones:
-                                idx_defaut = liste_zones.index(foyers[0])
-
-                        zone_choisie_plot = st.selectbox(
-                            "Capacité par ZS:", 
-                            options=liste_zones,
-                            index=idx_defaut,
-                            label_visibility="collapsed"
-                        )
-
                     df_zone_long = sim_data["df_long"][sim_data["df_long"]["Zone de Santé"] == zone_choisie_plot]
 
                     fig_zone = go.Figure()
@@ -2499,7 +2531,7 @@ def main():
                         paper_bgcolor="rgba(0,0,0,0)",
                         plot_bgcolor="rgba(0,0,0,0)",
                         height=510,
-                        margin=dict(l=52, r=24, t=76, b=76),
+                        margin=dict(l=52, r=24, t=76, b=72),
                         font=dict(family="Arial, sans-serif", size=12, color="#334155"),
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
                         hoverlabel=dict(bgcolor="#0f172a", font_size=12)
@@ -3059,14 +3091,17 @@ def main():
                     const map = L.map('map', {{
                         center: [{center_lat}, {center_lon}],
                         zoom: 8,
+                        maxZoom: 19,
                         zoomControl: true,
                         preferCanvas: true
                     }});
 
-                    L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
-                        attribution: '&copy; OpenStreetMap &copy; CARTO',
+                    L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors',
+                        maxNativeZoom: 19,
                         maxZoom: 19,
-                        subdomains: 'abcd'
+                        noWrap: true,
+                        keepBuffer: 4
                     }}).addTo(map);
 
                     // Création de Panes distincts pour assurer que les cercles restent SOUS les épingles (pins)
